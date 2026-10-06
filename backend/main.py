@@ -8,6 +8,10 @@ import uuid
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import onnx
+from onnx import numpy_helper
+import onnxruntime as ort
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
@@ -15,11 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from supabase import create_client, Client
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import models, transforms
 
 from backend.auth import get_current_user_id
 from backend.rag.rag_explainer import generate_rag_explanation
@@ -76,37 +75,10 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MODEL_FILENAME = "cardiosense_resnet18.pth"
+MODEL_FILENAME = "cardiosense_resnet18.onnx"
 MODEL_BUCKET = os.getenv("SUPABASE_MODEL_BUCKET", "cardiosense-model")
 LOCAL_MODEL_PATH = BASE_DIR / "models" / MODEL_FILENAME
 CACHE_MODEL_PATH = Path(tempfile.gettempdir()) / MODEL_FILENAME
-
-GRADCAM_DIR = (
-    BASE_DIR
-    / "backend"
-    / "gradcam_outputs"
-)
-
-try:
-    GRADCAM_DIR.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-except Exception:
-    # Read-only or ephemeral runtime environment
-    pass
-
-
-# --------------------------------------------------
-# Device
-# --------------------------------------------------
-
-device = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "cpu"
-)
-
 
 # --------------------------------------------------
 # Classes
@@ -126,8 +98,8 @@ class_names = [
 
 def resolve_model_path() -> Path:
     """
-    Resolves the location of the ResNet18 model checkpoint:
-    1. Local filesystem: If models/cardiosense_resnet18.pth exists (development), use it directly.
+    Resolves the location of the ResNet18 ONNX model:
+    1. Local filesystem: If models/cardiosense_resnet18.onnx exists, use it directly.
     2. Warm instance cache: If tempfile cache exists, reuse it without downloading.
     3. Cold start: Download securely from private Supabase Storage bucket using server credentials,
        and write to tempfile cache.
@@ -140,7 +112,6 @@ def resolve_model_path() -> Path:
 
     print(f"[MODEL INIT] Downloading '{MODEL_FILENAME}' from private Supabase Storage bucket '{MODEL_BUCKET}'...")
 
-    # Use service role key if available for server-side private bucket access, otherwise fallback to publishable key
     storage_key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         or os.getenv("SUPABASE_SECRET_KEY")
@@ -166,163 +137,87 @@ def resolve_model_path() -> Path:
 
 resolved_model_path = resolve_model_path()
 
-checkpoint = torch.load(
-    resolved_model_path,
-    map_location=device
+# --------------------------------------------------
+# ONNX Runtime Session & Classifier Weights
+# --------------------------------------------------
+
+ort_session = ort.InferenceSession(
+    str(resolved_model_path),
+    providers=["CPUExecutionProvider"]
 )
 
-model = models.resnet18(
-    weights=None
-)
+# Extract classifier weights from the ONNX graph initializers
+# for analytic Grad-CAM computation (ResNet18 GAP + Linear property)
+onnx_proto = onnx.load(str(resolved_model_path))
+fc_weight = None
+for init in onnx_proto.graph.initializer:
+    if init.name == "fc.weight":
+        fc_weight = numpy_helper.to_array(init)  # shape (4, 512)
+        break
 
-num_features = model.fc.in_features
-
-model.fc = nn.Linear(
-    num_features,
-    len(class_names)
-)
-
-model.load_state_dict(
-    checkpoint["model_state_dict"]
-)
-
-model = model.to(device)
-
-model.eval()
+if fc_weight is None:
+    raise RuntimeError("Could not find 'fc.weight' initializer in ONNX model graph.")
 
 
 # --------------------------------------------------
-# Image preprocessing
+# Image Preprocessing (Pillow + NumPy)
 # --------------------------------------------------
 
-transform = transforms.Compose([
-    transforms.Resize((448, 320)),
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-    transforms.ToTensor(),
 
-    transforms.Normalize(
-        mean=[
-            0.485,
-            0.456,
-            0.406
-        ],
-        std=[
-            0.229,
-            0.224,
-            0.225
-        ]
-    )
-])
+def preprocess_image(image: Image.Image) -> np.ndarray:
+    """
+    Exact backend preprocessing:
+    1. Resize((448, 320)): Pillow size (width=320, height=448) produces array (448, 320, 3)
+    2. ToTensor: float32 in [0.0, 1.0]
+    3. Normalize: ImageNet mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    4. NCHW layout: shape (1, 3, 448, 320)
+    """
+    resized = image.resize((320, 448), Image.Resampling.BILINEAR)
+    arr = np.array(resized, dtype=np.float32) / 255.0
+    normalized = (arr - IMAGENET_MEAN) / IMAGENET_STD
+    chw = np.transpose(normalized, (2, 0, 1))
+    nchw = np.expand_dims(chw, axis=0)
+    return nchw.astype(np.float32)
 
 
 # --------------------------------------------------
-# Grad-CAM
+# Grad-CAM (Pure ONNX Analytic CAM)
 # --------------------------------------------------
 
-gradcam_activations = None
-gradcam_gradients = None
+def generate_gradcam_onnx(
+    features: np.ndarray,
+    predicted_index: int,
+    target_size: tuple[int, int]
+) -> np.ndarray:
+    """
+    Calculates mathematically rigorous Grad-CAM via ResNet18 Global Average Pooling property:
+    Grad-CAM alpha_k^c simplifies analytically to the classifier weight w_{k, c}.
+    CAM = ReLU( sum_k( w_{k, c} * A^k ) ), normalized and resized to original image dimensions.
+    """
+    weights_c = fc_weight[predicted_index]  # shape (512,)
+    # features shape: (1, 512, H_feat, W_feat)
+    cam = np.tensordot(weights_c, features[0], axes=(0, 0))
 
+    # Apply ReLU
+    cam = np.maximum(cam, 0)
 
-def forward_hook(
-    module,
-    input,
-    output
-):
-    global gradcam_activations
+    # Normalize to [0, 1]
+    cam_min = cam.min()
+    cam_max = cam.max()
+    if cam_max - cam_min > 1e-8:
+        cam = (cam - cam_min) / (cam_max - cam_min)
+    else:
+        cam = np.zeros_like(cam)
 
-    gradcam_activations = output
-
-
-def backward_hook(
-    module,
-    grad_input,
-    grad_output
-):
-    global gradcam_gradients
-
-    gradcam_gradients = grad_output[0]
-
-
-target_layer = model.layer4[-1].conv2
-
-forward_handle = target_layer.register_forward_hook(
-    forward_hook
-)
-
-backward_handle = target_layer.register_full_backward_hook(
-    backward_hook
-)
-
-
-def generate_gradcam(
-    image: Image.Image,
-    predicted_index: int
-):
-
-    global gradcam_activations
-    global gradcam_gradients
-
-    input_tensor = transform(
-        image
-    ).unsqueeze(0).to(device)
-
-    model.zero_grad()
-
-    output = model(
-        input_tensor
+    # Upsample to original image size (width, height)
+    cam_img = Image.fromarray(cam.astype(np.float32))
+    cam_resized = np.array(
+        cam_img.resize(target_size, Image.Resampling.BILINEAR)
     )
-
-    score = output[
-        0,
-        predicted_index
-    ]
-
-    score.backward()
-
-    if (
-        gradcam_activations is None
-        or gradcam_gradients is None
-    ):
-        raise RuntimeError(
-            "Grad-CAM hooks did not capture activations or gradients."
-        )
-
-    activations = (
-        gradcam_activations.detach()
-    )
-
-    gradients = (
-        gradcam_gradients.detach()
-    )
-
-    weights = gradients.mean(
-        dim=(2, 3),
-        keepdim=True
-    )
-
-    cam = (
-        weights * activations
-    ).sum(
-        dim=1,
-        keepdim=True
-    )
-
-    cam = F.relu(cam)
-
-    cam = cam - cam.min()
-
-    cam = cam / (
-        cam.max() + 1e-8
-    )
-
-    cam = F.interpolate(
-        cam,
-        size=image.size[::-1],
-        mode="bilinear",
-        align_corners=False
-    )
-
-    return cam.squeeze().cpu().numpy()
+    return cam_resized
 
 
 # --------------------------------------------------
@@ -337,7 +232,7 @@ def health():
         "service": "CardioSense API",
         "model_loaded": True,
         "database_connected": True,
-        "device": str(device)
+        "device": "cpu (onnxruntime)"
     }
 
 
@@ -374,46 +269,33 @@ async def predict(
 
 
         # ------------------------------------------
-        # Model prediction
+        # Model prediction (ONNX Runtime)
         # ------------------------------------------
 
-        input_tensor = transform(
-            image
-        ).unsqueeze(0).to(device)
+        input_array = preprocess_image(image)
 
-        model.zero_grad()
-
-        output = model(
-            input_tensor
+        # ort_session returns logits and features
+        logits, features = ort_session.run(
+            ["logits", "features"],
+            {"image": input_array}
         )
 
-        probabilities = torch.softmax(
-            output,
-            dim=1
-        )
+        # Compute Softmax probabilities
+        exp_logits = np.exp(logits - np.max(logits, axis=-1, keepdims=True))
+        probabilities = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
 
-        predicted_index = torch.argmax(
-            probabilities,
-            dim=1
-        ).item()
-
-        confidence = probabilities[
-            0,
-            predicted_index
-        ].item()
-
-        prediction = class_names[
-            predicted_index
-        ]
-
+        predicted_index = int(np.argmax(probabilities[0]))
+        confidence = float(probabilities[0][predicted_index])
+        prediction = class_names[predicted_index]
 
         # ------------------------------------------
-        # Generate Grad-CAM
+        # Generate Grad-CAM (Pure ONNX Analytic CAM)
         # ------------------------------------------
 
-        heatmap = generate_gradcam(
-            image,
-            predicted_index
+        heatmap = generate_gradcam_onnx(
+            features=features,
+            predicted_index=predicted_index,
+            target_size=image.size  # (width, height)
         )
 
 

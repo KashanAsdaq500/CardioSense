@@ -12,11 +12,11 @@ node_modules/
 *.pth
 *.pt
 *.pkl
+*.onnx
 
 data/raw/
 data/processed/
 
 scratch/
 .ipynb_checkpoints/
-backend/gradcam_outputs/
 backend/gradcam_outputs/
