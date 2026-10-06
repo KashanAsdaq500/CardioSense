@@ -1,0 +1,83 @@
+[
+  {
+    "id": "ecg_basics_001",
+    "topic": "ECG basics",
+    "content": "An electrocardiogram (ECG) records the electrical activity of the heart over time. ECG interpretation commonly considers heart rate, rhythm, waveform morphology, intervals, and ST-T segment changes. ECG findings should always be interpreted together with the patient's clinical history, symptoms, examination, and other investigations.",
+    "source_name": "AHA/ACCF/HRS",
+    "source_organization": "American Heart Association, American College of Cardiology Foundation, Heart Rhythm Society",
+    "source_title": "Recommendations for the Standardization and Interpretation of the Electrocardiogram — Part I: The Electrocardiogram and Its Technology",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.106.180200",
+    "source_type": "Scientific Statement",
+    "publication_year": 2007
+  },
+  {
+    "id": "normal_ecg_001",
+    "topic": "Normal ECG",
+    "class": "Normal",
+    "content": "A normal ECG generally shows a regular sinus rhythm with expected P waves, QRS complexes, and T waves, along with intervals and waveforms within expected ranges. A machine-learning classification of Normal does not by itself establish that a patient has no cardiac disease.",
+    "source_name": "AHA/ACCF/HRS",
+    "source_organization": "American Heart Association, American College of Cardiology Foundation, Heart Rhythm Society",
+    "source_title": "Recommendations for the Standardization and Interpretation of the Electrocardiogram — Part II: Electrocardiography Diagnostic Statement List",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.106.180201",
+    "source_type": "Scientific Statement",
+    "publication_year": 2007
+  },
+  {
+    "id": "abnormal_heartbeat_001",
+    "topic": "Abnormal heartbeat",
+    "class": "Abnormal_Heartbeat",
+    "content": "Abnormal heart rhythms can produce ECG patterns that differ from a typical sinus rhythm. ECG abnormalities may be associated with different rhythm or conduction conditions. The exact clinical significance depends on the ECG pattern and the patient's clinical context. An AI classification should not be treated as a definitive diagnosis.",
+    "source_name": "AHA/ACCF/HRS",
+    "source_organization": "American Heart Association, American College of Cardiology Foundation, Heart Rhythm Society",
+    "source_title": "Recommendations for the Standardization and Interpretation of the Electrocardiogram — Part II: Electrocardiography Diagnostic Statement List",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.106.180201",
+    "source_type": "Scientific Statement",
+    "publication_year": 2007
+  },
+  {
+    "id": "history_mi_001",
+    "topic": "History of myocardial infarction",
+    "class": "History_of_MI",
+    "content": "An ECG may contain patterns associated with a previous myocardial infarction, but ECG findings alone may not reliably establish when an infarction occurred or provide a complete assessment of previous heart injury. Clinical history and other investigations may be required.",
+    "source_name": "AHA/ACCF/HRS",
+    "source_organization": "American Heart Association, American College of Cardiology Foundation, Heart Rhythm Society",
+    "source_title": "Recommendations for the Standardization and Interpretation of the Electrocardiogram — Part VI: Acute Ischemia/Infarction",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.108.191098",
+    "source_type": "Scientific Statement",
+    "publication_year": 2009
+  },
+  {
+    "id": "myocardial_infarction_001",
+    "topic": "Myocardial infarction",
+    "class": "Myocardial_Infarction",
+    "content": "Myocardial infarction (MI) occurs when part of the heart muscle is injured because of inadequate blood flow. ECG findings can provide important information in suspected acute MI, but ECG interpretation must be considered with symptoms, clinical assessment, serial ECGs when appropriate, cardiac biomarkers, and other investigations.",
+    "source_name": "AHA/ACCF/HRS",
+    "source_organization": "American Heart Association, American College of Cardiology Foundation, Heart Rhythm Society",
+    "source_title": "Recommendations for the Standardization and Interpretation of the Electrocardiogram — Part VI: Acute Ischemia/Infarction",
+    "source_url": "https://www.ahajournals.org/doi/10.1161/CIRCULATIONAHA.108.191098",
+    "source_type": "Scientific Statement",
+    "publication_year": 2009
+  },
+  {
+    "id": "ecg_ai_limitations_001",
+    "topic": "AI limitations",
+    "content": "CardioSense is a research and decision-support prototype. Its prediction represents a machine-learning classification based on an ECG image and should not be considered a medical diagnosis. Model performance can be affected by image quality, differences between datasets, acquisition conditions, and patient populations. A qualified healthcare professional should make clinical decisions.",
+    "source_name": "WHO",
+    "source_organization": "World Health Organization",
+    "source_title": "Cardiovascular diseases (CVDs)",
+    "source_url": "https://www.who.int/news-room/fact-sheets/detail/cardiovascular-diseases-(cvds)",
+    "source_type": "Fact Sheet",
+    "publication_year": 2021
+  },
+  {
+    "id": "gradcam_001",
+    "topic": "Grad-CAM",
+    "content": "Grad-CAM is an explainability technique that highlights image regions that contribute to a neural network's prediction. The highlighted regions indicate areas that influenced the model, but they should not be interpreted as proof that a particular anatomical or pathological feature caused the prediction.",
+    "source_name": "IEEE / Selvaraju et al.",
+    "source_organization": "IEEE International Conference on Computer Vision",
+    "source_title": "Grad-CAM: Visual Explanations from Deep Networks via Gradient-Based Localization",
+    "source_url": "https://openaccess.thecvf.com/content_iccv_2017/html/Selvaraju_Grad-CAM_Visual_Explanations_ICCV_2017_paper.html",
+    "source_type": "Peer-Reviewed Paper",
+    "publication_year": 2017
+  }
+]
