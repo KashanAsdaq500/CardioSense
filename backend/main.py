@@ -20,8 +20,12 @@ from PIL import Image
 from starlette.concurrency import run_in_threadpool
 from supabase import create_client, Client
 
-from backend.auth import get_current_user_id
-from backend.rag.rag_explainer import generate_rag_explanation
+try:
+    from auth import get_current_user_id
+    from rag.rag_explainer import generate_rag_explanation
+except ImportError:
+    from backend.auth import get_current_user_id
+    from backend.rag.rag_explainer import generate_rag_explanation
 
 
 # --------------------------------------------------
