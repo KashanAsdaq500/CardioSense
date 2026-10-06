@@ -1,24 +1,28 @@
-from starlette.concurrency import run_in_threadpool
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
-from backend.auth import get_current_user_id
-from backend.rag.rag_explainer import generate_rag_explanation
-from pathlib import Path
-import io
-import uuid
 import base64
+import io
 import os
+from pathlib import Path
+import tempfile
+import uuid
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from dotenv import load_dotenv
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+from starlette.concurrency import run_in_threadpool
 from supabase import create_client, Client
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models, transforms
-from PIL import Image
-from starlette.concurrency import run_in_threadpool
-from fastapi import FastAPI, File, UploadFile, HTTPException
+
+from backend.auth import get_current_user_id
+from backend.rag.rag_explainer import generate_rag_explanation
 
 
 # --------------------------------------------------
@@ -52,25 +56,30 @@ app = FastAPI(
     version="1.0.0"
 )
 
+cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+if "*" not in allowed_origins and "http://localhost:3000" not in allowed_origins:
+    allowed_origins.append("http://localhost:3000")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=allowed_origins if "*" not in allowed_origins else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Paths
+# --------------------------------------------------
+# Paths & Model Configuration
 # --------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MODEL_PATH = (
-    BASE_DIR
-    / "models"
-    / "cardiosense_resnet18.pth"
-)
+MODEL_FILENAME = "cardiosense_resnet18.pth"
+MODEL_BUCKET = os.getenv("SUPABASE_MODEL_BUCKET", "cardiosense-model")
+LOCAL_MODEL_PATH = BASE_DIR / "models" / MODEL_FILENAME
+CACHE_MODEL_PATH = Path(tempfile.gettempdir()) / MODEL_FILENAME
 
 GRADCAM_DIR = (
     BASE_DIR
@@ -78,10 +87,14 @@ GRADCAM_DIR = (
     / "gradcam_outputs"
 )
 
-GRADCAM_DIR.mkdir(
-    parents=True,
-    exist_ok=True
-)
+try:
+    GRADCAM_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+except Exception:
+    # Read-only or ephemeral runtime environment
+    pass
 
 
 # --------------------------------------------------
@@ -108,11 +121,53 @@ class_names = [
 
 
 # --------------------------------------------------
-# Model
+# Secure Model Retrieval (Local -> Warm Cache -> Supabase Storage)
 # --------------------------------------------------
 
+def resolve_model_path() -> Path:
+    """
+    Resolves the location of the ResNet18 model checkpoint:
+    1. Local filesystem: If models/cardiosense_resnet18.pth exists (development), use it directly.
+    2. Warm instance cache: If tempfile cache exists, reuse it without downloading.
+    3. Cold start: Download securely from private Supabase Storage bucket using server credentials,
+       and write to tempfile cache.
+    """
+    if LOCAL_MODEL_PATH.exists():
+        return LOCAL_MODEL_PATH
+
+    if CACHE_MODEL_PATH.exists() and CACHE_MODEL_PATH.stat().st_size > 0:
+        return CACHE_MODEL_PATH
+
+    print(f"[MODEL INIT] Downloading '{MODEL_FILENAME}' from private Supabase Storage bucket '{MODEL_BUCKET}'...")
+
+    # Use service role key if available for server-side private bucket access, otherwise fallback to publishable key
+    storage_key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SECRET_KEY")
+        or SUPABASE_PUBLISHABLE_KEY
+    )
+    storage_client = create_client(SUPABASE_URL, storage_key)
+
+    try:
+        model_bytes = storage_client.storage.from_(MODEL_BUCKET).download(MODEL_FILENAME)
+        if not model_bytes:
+            raise RuntimeError(f"Downloaded model file '{MODEL_FILENAME}' is empty.")
+
+        with open(CACHE_MODEL_PATH, "wb") as f:
+            f.write(model_bytes)
+
+        print(f"[MODEL INIT] Model successfully cached at {CACHE_MODEL_PATH} ({len(model_bytes)} bytes)")
+        return CACHE_MODEL_PATH
+    except Exception as err:
+        raise RuntimeError(
+            f"Failed to retrieve model from Supabase Storage bucket '{MODEL_BUCKET}': {err}"
+        )
+
+
+resolved_model_path = resolve_model_path()
+
 checkpoint = torch.load(
-    MODEL_PATH,
+    resolved_model_path,
     map_location=device
 )
 
@@ -388,41 +443,25 @@ async def predict(
 
 
         # ------------------------------------------
-        # Save Grad-CAM image
+        # Save Grad-CAM image to Base64 (in-memory)
         # ------------------------------------------
 
-        output_filename = (
-            f"{uuid.uuid4().hex}_gradcam.png"
-        )
-
-        output_path = (
-            GRADCAM_DIR
-            / output_filename
-        )
+        gradcam_buffer = io.BytesIO()
 
         plt.savefig(
-            output_path,
+            gradcam_buffer,
+            format="png",
             dpi=150,
             bbox_inches="tight"
         )
 
         plt.close(fig)
 
+        gradcam_buffer.seek(0)
 
-        # ------------------------------------------
-        # Convert Grad-CAM to Base64
-        # ------------------------------------------
-
-        with open(
-            output_path,
-            "rb"
-        ) as image_file:
-
-            gradcam_base64 = (
-                base64.b64encode(
-                    image_file.read()
-                ).decode("utf-8")
-            )
+        gradcam_base64 = base64.b64encode(
+            gradcam_buffer.read()
+        ).decode("utf-8")
 
         gradcam_data_url = (
             "data:image/png;base64,"
