@@ -75,19 +75,18 @@ export default function HistoryPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string | number>>(new Set());
   const [modalImage, setModalImage] = useState<{ src: string; title: string } | null>(null);
 
-  const fetchHistory = async () => {
+  const fetchHistory = async () => { console.log("[CardioSense] fetchHistory called"); console.log("[CardioSense] isLoaded:", isLoaded, "isSignedIn:", isSignedIn);
     setLoading(true);
     setError("");
 
     try {
-      const token = await getToken();
+      const token = await getToken(); console.log("[CardioSense] token exists:", !!token);
       const headers: Record<string, string> = {};
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-      const response = await fetch(`${apiUrl}/history?limit=50`, {
+      const response = await fetch(`/api/backend/history?limit=50`, {
         headers,
         cache: "no-store",
       });
@@ -586,3 +585,6 @@ export default function HistoryPage() {
     </div>
   );
 }
+
+
+
