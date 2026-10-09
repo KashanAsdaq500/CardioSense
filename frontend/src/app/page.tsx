@@ -94,7 +94,7 @@ export default function Home() {
       formData.append("file", file);
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-      const response = await fetch(`${apiUrl}/predict`, {
+      const response = await fetch(`/api/backend/predict`, {
         method: "POST",
         headers,
         body: formData,
