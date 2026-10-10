@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 from pathlib import Path
 
@@ -113,7 +113,7 @@ def synthesize_grounded_explanation(human_pred: str, prediction: str, enriched_s
     elif prediction == "History_of_MI":
         lines.append(
             "A history of myocardial infarction refers to ECG features—such as pathological Q waves, persistent T-wave "
-            "inversion, or loss of anterior R-wave progression—that may reflect prior ischemic myocardial damage or scar tissue."
+            "inversion, or loss of anterior R-wave progressionâ€”that may reflect prior ischemic myocardial damage or scar tissue."
         )
     elif prediction == "Myocardial_Infarction":
         lines.append(
@@ -223,6 +223,38 @@ def generate_rag_explanation(prediction: str):
     # Enrich sources with authoritative metadata
     # --------------------------------------------------
 
+ 
+    # Remove duplicate references while keeping the highest similarity.
+    unique_items = {}
+
+    for item in retrieval_data:
+        url = (item.get("source_url") or "").strip()
+        key = url or item.get("id") or item.get("topic")
+
+        try:
+            score = float(item.get("similarity", 0))
+        except (TypeError, ValueError):
+            score = 0.0
+
+        if key not in unique_items:
+            unique_items[key] = item
+        else:
+            try:
+                old_score = float(
+                    unique_items[key].get("similarity", 0)
+                )
+            except (TypeError, ValueError):
+                old_score = 0.0
+
+            if score > old_score:
+                unique_items[key] = item
+
+    retrieval_data = sorted(
+        unique_items.values(),
+        key=lambda item: float(item.get("similarity", 0) or 0),
+        reverse=True,
+    )[:4]
+
     enriched_sources = []
     context_parts = []
 
@@ -240,7 +272,7 @@ def generate_rag_explanation(prediction: str):
         source_type = item.get("source_type") or local_meta.get("source_type", "Standard Clinical Reference")
         pub_year = item.get("publication_year") or local_meta.get("publication_year")
 
-        similarity_score = round(float(item["similarity"]), 4)
+        similarity_score = round(float(item.get("similarity", 0) or 0), 4)
 
         enriched_item = {
             "id": item_id,
@@ -271,6 +303,8 @@ def generate_rag_explanation(prediction: str):
 
     context = "\n\n".join(context_parts)
 
+
+
     # --------------------------------------------------
     # Gemini prompt
     # --------------------------------------------------
@@ -289,6 +323,8 @@ CRITICAL GUIDELINES & DISTINCTION:
 - Do NOT prescribe medication, do NOT make a personal medical diagnosis, and do NOT recommend specific treatments.
 - CardioSense is a research and clinical decision-support prototype. Clinical decisions must always be made by a qualified healthcare professional.
 - Keep the main clinical explanation natural, readable, and professional without cluttering every single sentence with citations.
+- Use correct English grammar, spelling, and normal spaces between every word. Never merge adjacent words.
+- Before responding, proofread the complete explanation for missing spaces, joined words, and awkward sentences. Preserve medical terminology, source titles, URLs, and clinical meaning.
 - Group the explanation into clear sections:
   1. What this classification generally means
   2. What the ECG finding may represent (Clarify: The computational model analyzes visual patterns in the ECG image. These patterns may correspond to features of the recorded electrical activity, but the model does not replace clinical ECG interpretation.)
@@ -336,6 +372,52 @@ Retrieved clinical knowledge:
         explanation_text = synthesize_grounded_explanation(human_pred, prediction, enriched_sources)
 
     # --------------------------------------------------
+    # Normalize common spacing artifacts in generated text.
+    import re
+
+    explanation_text = re.sub(r"(?<=[.!?])(?=[A-Z])", " ", explanation_text)
+    explanation_text = re.sub(
+        r"(?<=[a-z,;:])(?=[A-Z])",
+        " ",
+        explanation_text
+    )
+
+    # Fix common joined words without altering source URLs or titles.
+    for old, new in [
+        ("Cardio Sense", "CardioSense"),
+        ("heart muscleis", "heart muscle is"),
+        ("interpretedtogether", "interpreted together"),
+        ("interpretationcommonly", "interpretation commonly"),
+        ("assessingfor", "assessing for"),
+        ("Suspectedacute", "Suspected acute"),
+        ("TheElectrocardiogram", "The Electrocardiogram"),
+        ("muscleis", "muscle is"),
+        ("serialECGs", "serial ECGs"),
+        ("andtreatment", "and treatment"),
+        ("always bemade", "always be made"),
+        ("alwaysbe", "always be"),
+        ("thatrequires", "that requires"),
+        ("completeclinical", "complete clinical"),
+        ("made bya", "made by a"),
+        ("medication,make", "medication, make"),
+        ("ablockage", "a blockage"),
+        ("ofthis", "of this"),
+        ("bya", "by a"),
+        ("featuresof", "features of"),
+        ("electrocardiogram(ECG)", "electrocardiogram (ECG)"),
+        ("thosefrom", "those from"),
+    ]:
+        explanation_text = explanation_text.replace(old, new)
+    explanation_text = explanation_text.replace("Acute coronary syndromes ? Recommendations", "Acute coronary syndromes — Recommendations")
+
+    # Normalize source titles before returning them.
+    for source in enriched_sources:
+        title = source.get("source_title", "")
+        source["source_title"] = title.replace(
+            "Acute coronary syndromes ? Recommendations",
+            "Acute coronary syndromes — Recommendations"
+        )
+
     # Return formatted result
     # --------------------------------------------------
 
@@ -386,3 +468,14 @@ if __name__ == "__main__":
         print(f"  Title: {source['source_title']}")
         print(f"  URL: {source['source_url']}")
         print(f"  Similarity: {source['similarity']}")
+
+
+
+
+
+
+
+
+
+
+
