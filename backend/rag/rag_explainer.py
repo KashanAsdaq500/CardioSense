@@ -403,6 +403,7 @@ Retrieved clinical knowledge:
         ("ablockage", "a blockage"),
         ("ofthis", "of this"),
         ("bya", "by a"),
+        ("featuresare", "features are"),
         ("featuresof", "features of"),
         ("electrocardiogram(ECG)", "electrocardiogram (ECG)"),
         ("thosefrom", "those from"),
@@ -468,6 +469,7 @@ if __name__ == "__main__":
         print(f"  Title: {source['source_title']}")
         print(f"  URL: {source['source_url']}")
         print(f"  Similarity: {source['similarity']}")
+
 
 
 
