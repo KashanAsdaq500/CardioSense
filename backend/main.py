@@ -21,10 +21,10 @@ from starlette.concurrency import run_in_threadpool
 from supabase import create_client, Client
 
 try:
-    from auth import get_current_user_id
+    from auth import get_current_user_id, get_optional_user_id
     from rag.rag_explainer import generate_rag_explanation
 except ImportError:
-    from backend.auth import get_current_user_id
+    from backend.auth import get_current_user_id, get_optional_user_id
     from backend.rag.rag_explainer import generate_rag_explanation
 
 
@@ -32,19 +32,38 @@ except ImportError:
 # Environment
 # --------------------------------------------------
 
-load_dotenv()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+BACKEND_DIR = Path(__file__).resolve().parent
+
+# Load local environment files; deployment environment variables take priority.
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BACKEND_DIR / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY")
+SUPABASE_SERVER_KEY = (
+    os.getenv("SUPABASE_SECRET_KEY")
+    or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+)
 
-if not SUPABASE_URL or not SUPABASE_PUBLISHABLE_KEY:
+if not SUPABASE_URL or not SUPABASE_SERVER_KEY:
     raise RuntimeError(
-        "Supabase environment variables are missing."
+        "Supabase URL or server-side secret/service-role key is missing."
     )
+
+# Backend-only client; never expose this key to the frontend.
+# SUPABASE_KEY_DIAGNOSTIC: never print the secret itself
+_key = SUPABASE_SERVER_KEY
+_key_type = (
+    "new_secret" if _key.startswith("sb_secret_")
+    else "legacy_jwt" if _key.startswith("eyJ")
+    else "unknown"
+)
+print(f"[SUPABASE_KEY_DIAGNOSTIC] type={_key_type}, url={SUPABASE_URL}")
 
 supabase: Client = create_client(
     SUPABASE_URL,
-    SUPABASE_PUBLISHABLE_KEY
+    SUPABASE_SERVER_KEY
 )
 
 
@@ -116,12 +135,7 @@ def resolve_model_path() -> Path:
 
     print(f"[MODEL INIT] Downloading '{MODEL_FILENAME}' from private Supabase Storage bucket '{MODEL_BUCKET}'...")
 
-    storage_key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SECRET_KEY")
-        or SUPABASE_PUBLISHABLE_KEY
-    )
-    storage_client = create_client(SUPABASE_URL, storage_key)
+    storage_client = create_client(SUPABASE_URL, SUPABASE_SERVER_KEY)
 
     try:
         model_bytes = storage_client.storage.from_(MODEL_BUCKET).download(MODEL_FILENAME)
@@ -247,7 +261,7 @@ def health():
 @app.post("/predict")
 async def predict(
     file: UploadFile = File(...),
-    user_id: str = Depends(get_current_user_id)
+    user_id: Optional[str] = Depends(get_optional_user_id)
 ):
 
     if (
@@ -385,45 +399,25 @@ async def predict(
         # Save analysis to Supabase
         # ------------------------------------------
 
-        analysis_data = {
-            "user_id": user_id,
-            "filename": file.filename,
-            "prediction": prediction,
-            "confidence": round(
-                confidence * 100,
-                2
-            ),
-            "gradcam_image": gradcam_data_url,
-            "rag_explanation": rag_explanation
-        }
-
         saved_analysis = None
 
-        try:
-            db_response = supabase.table(
-                "ecg_analyses"
-            ).insert(
-                analysis_data
-            ).execute()
+        # Store reports only for authenticated users.
+        if user_id:
+            analysis_data = {
+                "user_id": user_id,
+                "filename": file.filename,
+                "prediction": prediction,
+                "confidence": round(confidence * 100, 2),
+                "gradcam_image": gradcam_data_url,
+                "rag_explanation": rag_explanation
+            }
 
-            if db_response.data:
-                saved_analysis = db_response.data[0]
-        except Exception as db_err:
-            err_str = str(db_err)
-            # If user_id column has not yet been added to Supabase, fall back gracefully
-            if "user_id" in err_str:
-                print(f"[NOTICE] 'user_id' column not found in ecg_analyses yet; saving without user_id until migration is run.")
-                try:
-                    fallback_data = {k: v for k, v in analysis_data.items() if k != "user_id"}
-                    db_response = supabase.table("ecg_analyses").insert(fallback_data).execute()
-                    if db_response.data:
-                        saved_analysis = db_response.data[0]
-                except Exception as fallback_err:
-                    print(f"[WARNING] Fallback database save failed: {fallback_err}")
-            else:
-                print(f"[WARNING] Could not save analysis to Supabase: {db_err}")
-
-        # ------------------------------------------
+            try:
+                db_response = supabase.table("ecg_analyses").insert(analysis_data).execute()
+                if db_response.data:
+                    saved_analysis = db_response.data[0]
+            except Exception as db_err:
+                print(f"[WARNING] Could not save authenticated analysis: {db_err}")
         # Final response
         # ------------------------------------------
 
@@ -455,11 +449,14 @@ async def predict(
         }
 
 
-    except Exception as e:
-
+    except HTTPException:
+        raise
+    except Exception:
+        import logging
+        logging.exception("Unexpected error during ECG prediction")
         raise HTTPException(
             status_code=500,
-            detail=f"Prediction failed: {str(e)}"
+            detail="Prediction failed. Please try again later."
         )
 
 
@@ -494,12 +491,3 @@ def get_history(
             status_code=500,
             detail=f"Failed to fetch ECG analysis history: {str(e)}"
         )
-
-
-
-
-
-
-
-
-
