@@ -29,6 +29,21 @@ type PredictionResult = {
   rag_sources: RagSource[];
 };
 
+function getGeneralExplanation(prediction: string): string {
+  switch (prediction) {
+    case "Normal":
+      return "The AI model did not identify one of the abnormal patterns it was trained to recognize. This does not guarantee that your heart is healthy or rule out a heart problem.";
+    case "Abnormal_Heartbeat":
+      return "The AI model found a pattern associated with an irregular heartbeat. A qualified clinician should review the ECG alongside your symptoms and medical history.";
+    case "History_of_MI":
+      return "The AI model found a pattern associated with a possible previous heart attack. This result alone cannot confirm a past heart attack; a clinician must review the ECG and medical history.";
+    case "Myocardial_Infarction":
+      return "The AI model found a pattern associated with a possible heart attack. This is not a diagnosis. If you have chest pain, breathlessness, cold sweating, or fainting, seek emergency medical care immediately.";
+    default:
+      return "The AI model produced a result that needs review by a qualified healthcare professional.";
+  }
+}
+
 function formatPrediction(prediction: string): string {
   switch (prediction) {
     case "Normal":
@@ -46,6 +61,7 @@ function formatPrediction(prediction: string): string {
 
 export default function Home() {
   const { getToken, isSignedIn } = useAuth();
+  const [userMode, setUserMode] = useState<"general" | "doctor">("general");
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [result, setResult] = useState<PredictionResult | null>(null);
@@ -188,13 +204,22 @@ export default function Home() {
             </span>
 
             <div className="pl-1 border-l border-slate-200 flex items-center">
-              <UserButton
-                appearance={{
-                  elements: {
-                    userButtonAvatarBox: "h-8 w-8 ring-2 ring-slate-200 hover:ring-red-400 transition-all",
-                  },
-                }}
-              />
+              {isSignedIn ? (
+                <UserButton
+                  appearance={{
+                    elements: {
+                      userButtonAvatarBox: "h-8 w-8 ring-2 ring-slate-200 hover:ring-red-400 transition-all",
+                    },
+                  }}
+                />
+              ) : (
+                <Link
+                  href="/sign-in"
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 transition-colors"
+                >
+                  Sign In
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -222,7 +247,42 @@ export default function Home() {
           </p>
         </section>
 
-        {/* WORKSTATION GRID: UPLOAD & RESULTS */}
+        {/* USER MODE SELECTION */}
+    <section className="mb-6 grid gap-4 sm:grid-cols-2" aria-label="Choose analysis mode">
+      <button
+        type="button"
+        aria-pressed={userMode === "general"}
+        onClick={() => setUserMode("general")}
+        className={`rounded-2xl border p-5 text-left transition ${
+          userMode === "general"
+            ? "border-cyan-500 bg-cyan-50 ring-2 ring-cyan-200"
+            : "border-slate-200 bg-white hover:border-cyan-300"
+        }`}
+      >
+        <span className="block text-base font-bold text-slate-900">General User Mode</span>
+        <span className="mt-2 block text-sm leading-relaxed text-slate-600">
+          Simple explanations, practical next steps, and important warning signs.
+        </span>
+      </button>
+
+      <button
+        type="button"
+        aria-pressed={userMode === "doctor"}
+        onClick={() => setUserMode("doctor")}
+        className={`rounded-2xl border p-5 text-left transition ${
+          userMode === "doctor"
+            ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-200"
+            : "border-slate-200 bg-white hover:border-indigo-300"
+        }`}
+      >
+        <span className="block text-base font-bold text-slate-900">Doctor Mode</span>
+        <span className="mt-2 block text-sm leading-relaxed text-slate-600">
+          Technical ECG results, Grad-CAM visualization, and clinical references.
+        </span>
+      </button>
+    </section>
+
+    {/* WORKSTATION GRID: UPLOAD & RESULTS */}
         <div className="grid gap-6 lg:grid-cols-[1fr_1.35fr] items-start">
           {/* UPLOAD CARD */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-xs">
@@ -447,6 +507,21 @@ export default function Home() {
                       {result.confidence}%
                     </p>
                   </div>
+                </div>
+
+                {/* GENERAL CLINICAL EXPLANATION */}
+                <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 sm:p-5">
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    General Clinical Explanation
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700">
+                    {getGeneralExplanation(result.prediction)}
+                  </p>
+                  <p className="mt-3 border-t border-blue-100 pt-3 text-xs leading-relaxed text-slate-500">
+                    This AI-generated result is for informational support only,
+                    not a diagnosis. A qualified healthcare professional must
+                    interpret the ECG alongside symptoms and medical history.
+                  </p>
                 </div>
 
                 {/* GRAD-CAM CARD */}
