@@ -1,10 +1,10 @@
-import base64
+﻿import base64
 import io
 import os
 from pathlib import Path
 import tempfile
 import uuid
-
+from typing import Optional
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
