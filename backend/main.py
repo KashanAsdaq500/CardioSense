@@ -14,7 +14,7 @@ from onnx import numpy_helper
 import onnxruntime as ort
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from starlette.concurrency import run_in_threadpool
@@ -466,7 +466,7 @@ async def predict(
 
 @app.get("/history")
 def get_history(
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=100),
     user_id: str = Depends(get_current_user_id)
 ):
     try:
