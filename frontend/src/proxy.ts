@@ -1,7 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-// Public routes that do not require authentication
+// Public routes: guests may view the homepage and analyze an ECG.
+// History and all other routes remain protected.
 const isPublicRoute = createRouteMatcher([
+  "/",
+  "/api/backend/predict",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/icon.svg",
@@ -16,7 +19,7 @@ export default clerkMiddleware(async (auth, request) => {
 export const config = {
   matcher: [
     "/__clerk/(.*)",
-    "/((?!_next|[^?]*\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
     "/(api|trpc)(.*)",
   ],
 };
